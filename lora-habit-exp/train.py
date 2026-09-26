@@ -5,7 +5,7 @@ from peft import LoraConfig, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from common import BASE_MODEL
 
-EPOCHS, LR, MAXLEN, OUT = 3, 2e-4, 768, "adapter"
+EPOCHS, LR, MAXLEN, OUT, BS = 1, 1e-4, 512, "adapter", 8
 
 tok = AutoTokenizer.from_pretrained(BASE_MODEL)
 model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, torch_dtype=torch.bfloat16, device_map="auto")
@@ -30,17 +30,21 @@ def encode(messages):
 
 rows = [encode(json.loads(l)["messages"]) for l in open("data/train.jsonl", encoding="utf-8")]
 opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=LR)
+pad = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
 model.train()
 for ep in range(EPOCHS):
     torch.manual_seed(ep)
-    tot = 0.0
-    for i in torch.randperm(len(rows)).tolist():
-        ids, lab = rows[i]
-        out = model(input_ids=torch.tensor([ids], device=model.device),
-                    labels=torch.tensor([lab], device=model.device))
-        out.loss.backward()
+    order = torch.randperm(len(rows)).tolist()
+    for step, b in enumerate(range(0, len(order), BS)):
+        batch = [rows[i] for i in order[b:b + BS]]
+        L = max(len(x) for x, _ in batch)
+        ids = torch.tensor([x + [pad] * (L - len(x)) for x, _ in batch], device=model.device)
+        lab = torch.tensor([y + [-100] * (L - len(y)) for _, y in batch], device=model.device)
+        att = torch.tensor([[1] * len(x) + [0] * (L - len(x)) for x, _ in batch], device=model.device)
+        loss = model(input_ids=ids, attention_mask=att, labels=lab).loss
+        loss.backward()
         opt.step(); opt.zero_grad()
-        tot += out.loss.item()
-    print(f"epoch {ep}: loss {tot/len(rows):.4f}")
+        if step % 100 == 0:
+            print(f"epoch {ep} step {step}/{len(order)//BS}: loss {loss.item():.4f}", flush=True)
 model.save_pretrained(OUT)
 print("saved adapter ->", OUT)

@@ -11,8 +11,8 @@
 
 ```bash
 pip install -r requirements.txt
-python gen_data.py      # data/
-python train.py         # adapter/  (bf16, 1.5B → GPU ~8GB; 3B로 바꾸면 ~16GB)
+python gen_data.py      # data/ (기본 30000개, 숫자 인자로 조절)
+python train.py         # adapter/ (1 epoch, batch 8; 1.5B → GPU ~8-12GB)
 python chat.py          # LoRA / --base
 python eval.py          # base vs LoRA, 도메인·holdout별 tone / wrong / no_apology
 ```
